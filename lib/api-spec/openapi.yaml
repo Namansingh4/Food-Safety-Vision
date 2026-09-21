@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: food-analysis
+    description: Food package image analysis
 paths:
   /healthz:
     get:
@@ -24,6 +26,60 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /food/model-info:
+    get:
+      operationId: getFoodModelInfo
+      tags: [food-analysis]
+      summary: Get the active food-risk model metadata
+      responses:
+        "200":
+          description: Model metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FoodModelInfo"
+  /food/pipeline-info:
+    get:
+      operationId: getFoodPipelineInfo
+      tags: [food-analysis]
+      summary: Get the computer vision and ML pipeline stages
+      responses:
+        "200":
+          description: Pipeline stages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FoodPipelineInfo"
+  /food/analyze:
+    post:
+      operationId: analyzeFoodImage
+      tags: [food-analysis]
+      summary: Analyze a food package image
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/FoodImageUpload"
+      responses:
+        "200":
+          description: Food safety analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FoodAnalysis"
+        "400":
+          description: Invalid image upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Analysis failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +89,164 @@ components:
           type: string
       required:
         - status
+    FoodImageUpload:
+      type: object
+      properties:
+        image:
+          type: string
+          format: binary
+      required:
+        - image
+    FoodModelInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        algorithm:
+          type: string
+        version:
+          type: string
+        trainedSamples:
+          type: integer
+        features:
+          type: array
+          items:
+            type: string
+        classes:
+          type: array
+          items:
+            type: string
+        trainingNote:
+          type: string
+      required: [name, algorithm, version, trainedSamples, features, classes, trainingNote]
+    FoodPipelineStage:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [ready, optional]
+      required: [id, label, description, status]
+    FoodPipelineInfo:
+      type: object
+      properties:
+        stages:
+          type: array
+          items:
+            $ref: "#/components/schemas/FoodPipelineStage"
+        ocrEngine:
+          type: string
+        visionLibrary:
+          type: string
+        classifier:
+          type: string
+      required: [stages, ocrEngine, visionLibrary, classifier]
+    FoodExtractedField:
+      type: object
+      properties:
+        value:
+          type: string
+        confidence:
+          type: number
+        source:
+          type: string
+      required: [value, confidence, source]
+    FoodExtractedInfo:
+      type: object
+      properties:
+        productName:
+          $ref: "#/components/schemas/FoodExtractedField"
+        brand:
+          $ref: "#/components/schemas/FoodExtractedField"
+        manufacturingDate:
+          $ref: "#/components/schemas/FoodExtractedField"
+        expiryDate:
+          $ref: "#/components/schemas/FoodExtractedField"
+        bestBefore:
+          $ref: "#/components/schemas/FoodExtractedField"
+        batchNumber:
+          $ref: "#/components/schemas/FoodExtractedField"
+        ingredients:
+          $ref: "#/components/schemas/FoodExtractedField"
+        mrp:
+          $ref: "#/components/schemas/FoodExtractedField"
+      required: [productName, brand, manufacturingDate, expiryDate, bestBefore, batchNumber, ingredients, mrp]
+    FoodProbability:
+      type: object
+      properties:
+        label:
+          type: string
+        probability:
+          type: number
+      required: [label, probability]
+    FoodRiskIndicator:
+      type: object
+      properties:
+        label:
+          type: string
+        severity:
+          type: string
+          enum: [low, medium, high]
+        detail:
+          type: string
+      required: [label, severity, detail]
+    FoodAnalysis:
+      type: object
+      properties:
+        analysisId:
+          type: string
+        filename:
+          type: string
+        analyzedAt:
+          type: string
+        imagePreview:
+          type: string
+        expiryStatus:
+          type: string
+          enum: [expired, not_expired, unavailable]
+        expiryMessage:
+          type: string
+        expiryConfidence:
+          type: number
+        foodCategory:
+          type: string
+        categoryConfidence:
+          type: number
+        riskLevel:
+          type: string
+          enum: [low, moderate, high]
+        riskConfidence:
+          type: number
+        riskProbabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/FoodProbability"
+        riskIndicators:
+          type: array
+          items:
+            $ref: "#/components/schemas/FoodRiskIndicator"
+        extracted:
+          $ref: "#/components/schemas/FoodExtractedInfo"
+        rawOcrText:
+          type: string
+        preprocessing:
+          type: array
+          items:
+            type: string
+        model:
+          $ref: "#/components/schemas/FoodModelInfo"
+        disclaimer:
+          type: string
+      required: [analysisId, filename, analyzedAt, imagePreview, expiryStatus, expiryMessage, expiryConfidence, foodCategory, categoryConfidence, riskLevel, riskConfidence, riskProbabilities, riskIndicators, extracted, rawOcrText, preprocessing, model, disclaimer]
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
 

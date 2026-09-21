@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Food Safety AI"
+description = "A full-stack food expiry and adulteration screening application that accepts package photos, preprocesses them with computer vision, extracts label data with OCR, and runs a trained machine-learning risk classifier with confidence-aware results."
+version = "1.0.0"
+id = "artifacts/food-safety-ai"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24029
+
+[services.development]
+run = "pnpm --filter @workspace/food-safety-ai run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/food-safety-ai", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/food-safety-ai/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24029"
+BASE_PATH = "/"

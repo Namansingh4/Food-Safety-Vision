@@ -1,0 +1,1 @@
+- [Food analysis runtime](food-analysis-runtime.md) — Keep PaddleOCR primary with a truthful local fallback for offline demos.

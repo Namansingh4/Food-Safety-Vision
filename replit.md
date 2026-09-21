@@ -1,6 +1,6 @@
-# [Project name]
+# Food Safety AI
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Food Safety AI screens food package photos with OpenCV preprocessing, OCR, expiry logic, and a trained Random Forest risk model.
 
 ## Run & Operate
 
@@ -22,15 +22,23 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/food-safety-ai/` — responsive analysis workspace and methodology page
+- `artifacts/api-server/src/routes/food-analysis.ts` — upload, model metadata, and pipeline metadata routes
+- `artifacts/api-server/src/food-analysis/food_analyzer.py` — OpenCV, PaddleOCR adapter, field parsing, expiry logic, and scikit-learn model
+- `lib/api-spec/openapi.yaml` — source of truth for analysis API contracts
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The frontend uses the generated API client for the multipart upload and metadata queries.
+- Image analysis runs in a Python process so the capstone pipeline can use OpenCV, OCR, and scikit-learn directly.
+- The Random Forest is trained at runtime from a small labeled feature dataset bundled with the project; probabilities are returned alongside the predicted risk band.
+- OCR attempts PaddleOCR first and uses local Tesseract as an offline fallback, while exposing the pipeline in the UI.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Upload or drag in one food package image.
+- Preprocess the image, extract label text and structured fields, calculate expiry status, classify food category, and estimate low/moderate/high risk with confidence.
+- Show raw OCR, preprocessing trace, risk probabilities, extracted-field confidence, model metadata, and an explicit laboratory-confirmation disclaimer.
 
 ## User preferences
 
@@ -38,7 +46,8 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Python dependencies are managed through the workspace Python module and `pyproject.toml`; keep the PaddleOCR adapter fallback intact for offline demo environments.
+- After changing `lib/api-spec/openapi.yaml`, run `pnpm --filter @workspace/api-spec run codegen` before typechecking the frontend or API.
 
 ## Pointers
 
