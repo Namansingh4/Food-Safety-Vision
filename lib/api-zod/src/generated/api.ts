@@ -111,6 +111,11 @@ export const AnalyzeFoodImageResponse = zod.object({
   "confidence": zod.number(),
   "source": zod.string()
 }),
+  "netQuantity": zod.object({
+  "value": zod.string(),
+  "confidence": zod.number(),
+  "source": zod.string()
+}),
   "mrp": zod.object({
   "value": zod.string(),
   "confidence": zod.number(),

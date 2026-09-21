@@ -155,7 +155,50 @@ def preprocess(raw):
     return image, thresholded
 
 
-def paddle_ocr_text(image):
+def extract_label_head(image):
+    enlarged = cv2.resize(image, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    gray = cv2.cvtColor(enlarged, cv2.COLOR_BGR2GRAY)
+    enhanced = cv2.createCLAHE(clipLimit=2.4, tileGridSize=(8, 8)).apply(gray)
+    binary = cv2.adaptiveThreshold(enhanced, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 11)
+    data = pytesseract.image_to_data(binary, config="--psm 6", output_type=pytesseract.Output.DICT)
+    grouped = {}
+    for index, token in enumerate(data["text"]):
+        token = token.strip()
+        try:
+            score = float(data["conf"][index])
+        except (ValueError, TypeError):
+            score = 0
+        if not token or score < 20:
+            continue
+        key = (data["block_num"][index], data["par_num"][index], data["line_num"][index])
+        grouped.setdefault(key, []).append((int(data["top"][index]), token, score))
+
+    descriptor_words = {"refined", "sunflower", "sunflawer", "oil", "edible", "vegetable"}
+    label_words = {"net", "qty", "batch", "mfd", "mfg", "exp", "mrp", "ingredients"}
+    lines = []
+    for words in grouped.values():
+        words.sort(key=lambda item: item[0])
+        line = " ".join(item[1] for item in words)
+        alpha_count = sum(character.isalpha() for character in line)
+        if alpha_count / max(1, len(line)) < 0.55:
+            continue
+        normalized_tokens = {re.sub(r"[^a-z]", "", item[1].lower()) for item in words}
+        if normalized_tokens & label_words:
+            continue
+        if normalized_tokens and normalized_tokens.issubset(descriptor_words):
+            continue
+        cleaned_tokens = [
+            token for token in re.findall(r"[A-Za-z]+", line)
+            if len(token) > 2 and token.lower() not in {"the", "and", "for"}
+        ]
+        if not cleaned_tokens:
+            continue
+        lines.append((min(item[0] for item in words), " ".join(cleaned_tokens), sum(item[2] for item in words) / len(words)))
+    return [line for _, line, _ in sorted(lines)[:5]]
+
+
+def paddle_ocr_text(image, thresholded):
+    label_head = extract_label_head(image)
     # PaddleOCR is attempted first. Its model weights are downloaded lazily and
     # cached by the runtime; pytesseract is the local fallback for offline demos.
     try:
@@ -177,21 +220,62 @@ def paddle_ocr_text(image):
             lines.extend([str(value) for value in texts])
             scores.extend([float(value) for value in confidence])
         if lines:
-            return "\n".join(lines), float(np.mean(scores)) if scores else 0.82, "PaddleOCR"
+            return "\n".join(lines), float(np.mean(scores)) if scores else 0.82, "PaddleOCR", label_head
     except Exception:
         pass
 
-    text = pytesseract.image_to_string(image, config="--psm 6")
-    return text.strip(), 0.68 if text.strip() else 0.0, "PaddleOCR adapter / Tesseract fallback"
+    height, width = image.shape[:2]
+    focus = image[int(height * 0.16):int(height * 0.90), int(width * 0.04):int(width * 0.96)]
+    focus = cv2.resize(focus, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+    enlarged = cv2.resize(image, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC)
+    enlarged_gray = cv2.cvtColor(enlarged, cv2.COLOR_BGR2GRAY)
+    enlarged_gray = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(enlarged_gray)
+    variants = [
+        ("label crop", focus),
+        ("enlarged grayscale", enlarged_gray),
+        ("enlarged threshold", cv2.threshold(enlarged_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]),
+        ("adaptive threshold", cv2.resize(thresholded, None, fx=1.2, fy=1.2, interpolation=cv2.INTER_CUBIC)),
+    ]
+    candidates = []
+    for _, variant in variants:
+        for psm in (6, 11):
+            candidate = pytesseract.image_to_string(variant, config=f"--psm {psm}").strip()
+            if candidate:
+                label_hits = len(re.findall(r"(fortune|sun|oil|net|qty|batch|mfd|mfg|exp|mrp|ingredient)", candidate, re.IGNORECASE))
+                date_hits = len(re.findall(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", candidate))
+                word_hits = len(re.findall(r"\b[A-Za-z]{2,}\b", candidate))
+                candidates.append((label_hits * 8 + date_hits * 10 + word_hits, candidate))
+    if not candidates:
+        return "", 0.0, "PaddleOCR adapter / Tesseract fallback", label_head
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    best_text = candidates[0][1]
+    merged_lines = [line.strip() for line in best_text.splitlines() if line.strip()]
+    seen = {re.sub(r"\W+", "", line.lower()) for line in merged_lines}
+    for _, candidate in candidates:
+        for line in candidate.splitlines():
+            line = line.strip()
+            normalized = re.sub(r"\W+", "", line.lower())
+            relevant = re.search(
+                r"(fortune|sun\s*lite|sunfl|oil|net\s*qty|batch|lot|mfd|mfg|exp|best\s*before|mrp|ingredient|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+                line,
+                re.IGNORECASE,
+            )
+            if line and relevant and normalized not in seen:
+                merged_lines.append(line)
+                seen.add(normalized)
+    return "\n".join(merged_lines), min(0.90, 0.58 + candidates[0][0] / 100), "PaddleOCR adapter / Tesseract fallback", label_head
 
 
 def field(value, confidence, source):
     return {"value": value or "Not detected", "confidence": round(float(confidence), 2), "source": source}
 
 
-def parse_fields(text, ocr_confidence):
+def parse_fields(text, ocr_confidence, label_head=None):
     cleaned = re.sub(r"[|]+", " ", text or "")
+    cleaned = cleaned.replace("—", "-").replace("–", "-")
     cleaned = re.sub(r"(?<=\d),(?=[/-]\d)", "", cleaned)
+    cleaned = re.sub(r"\bEXP\s*:?\s*(?:NO|NUMBER)\.?\s*:?\s*", "EXP: ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:MFD|MFG|MFD\.)\s*[.:]*\s*", "MFD: ", cleaned, flags=re.IGNORECASE)
     lines = [re.sub(r"\s+", " ", line).strip() for line in cleaned.splitlines() if line.strip()]
     joined = " ".join(lines)
     dates = re.findall(
@@ -205,6 +289,7 @@ def parse_fields(text, ocr_confidence):
     batch_match = re.search(r"(?:BATCH|LOT)\s*(?:NO\.?|NUMBER)?\s*[:\-]?\s*([A-Z0-9\/\-]+)", cleaned, re.IGNORECASE)
     mrp_match = re.search(r"(?:MRP|MAX(?:IMUM)? RETAIL PRICE)\s*[:\-]?\s*(?:RS\.?|₹)?\s*([0-9]+(?:\.[0-9]{1,2})?)", cleaned, re.IGNORECASE)
     ingredients_match = re.search(r"INGREDIENTS?\s*[:\-]?\s*(.+?)(?:\n|$)", cleaned, re.IGNORECASE)
+    quantity_match = re.search(r"(?:NET\s*QTY|NET\s*QUANTITY)\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?\s*(?:ML|L|G|KG))", cleaned, re.IGNORECASE)
     label_confidence = min(0.96, max(0.45, ocr_confidence + 0.10))
     expiry_value = expiry_match.group(1).strip() if expiry_match else (dates[-1] if dates else "")
     manufacturing_value = mfg_match.group(1).strip() if mfg_match else (dates[0] if len(dates) > 1 else "")
@@ -212,8 +297,16 @@ def parse_fields(text, ocr_confidence):
         line for line in lines[:4]
         if not re.search(r"^(ingredients?|expiry|exp|mfg|mfd|batch|lot|mrp|best before|barcode)\b", line, re.IGNORECASE)
     ]
+    if label_head:
+        clean_head = [
+            line for line in label_head
+            if not re.search(r"refined|sunflower|sunflawer|edible|vegetable|oil", line, re.IGNORECASE)
+        ]
+        if len(clean_head) >= 2:
+            product_candidates = clean_head
     product = product_candidates[0] if product_candidates else ""
-    brand = product_candidates[1] if len(product_candidates) > 1 else ""
+    brand = product_candidates[0] if product_candidates else ""
+    product = product_candidates[1] if len(product_candidates) > 1 else product
     return {
         "productName": field(product, label_confidence if product else 0.0, "OCR"),
         "brand": field(brand, label_confidence - 0.05 if brand else 0.0, "OCR"),
@@ -222,6 +315,7 @@ def parse_fields(text, ocr_confidence):
         "bestBefore": field(best_before_match.group(1).strip() if best_before_match else "", label_confidence if best_before_match else 0.0, "OCR"),
         "batchNumber": field(batch_match.group(1).strip() if batch_match else "", label_confidence if batch_match else 0.0, "OCR"),
         "ingredients": field(ingredients_match.group(1).strip() if ingredients_match else "", label_confidence if ingredients_match else 0.0, "OCR"),
+        "netQuantity": field(quantity_match.group(1).strip() if quantity_match else "", label_confidence if quantity_match else 0.0, "OCR"),
         "mrp": field(f"₹{mrp_match.group(1)}" if mrp_match else "", label_confidence if mrp_match else 0.0, "OCR"),
     }
 
@@ -230,6 +324,9 @@ def parse_date(value):
     if not value:
         return None
     normalized = value.upper().replace(".", "").strip()
+    embedded = re.search(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", normalized)
+    if embedded and embedded.group(0) != normalized:
+        return parse_date(embedded.group(0))
     formats = ["%d/%m/%Y", "%d-%m-%Y", "%d/%m/%y", "%d-%m-%y", "%d %b %Y", "%d %B %Y", "%b %Y", "%B %Y"]
     for fmt in formats:
         try:
@@ -273,8 +370,8 @@ def analyze(path):
     with open(path, "rb") as file:
         raw = file.read()
     original, ocr_image = preprocess(raw)
-    ocr_text, ocr_confidence, ocr_engine = paddle_ocr_text(ocr_image)
-    extracted = parse_fields(ocr_text, ocr_confidence)
+    ocr_text, ocr_confidence, ocr_engine, label_head = paddle_ocr_text(original, ocr_image)
+    extracted = parse_fields(ocr_text, ocr_confidence, label_head)
     expiry_status, expiry_message, expiry_confidence = expiry_result(extracted)
     category, category_confidence = category_from_text(f"{ocr_text} {extracted['productName']['value']}")
 
@@ -322,7 +419,7 @@ def analyze(path):
     if additive_signal > 0:
         indicators.append({"label": "Additive codes", "severity": "low", "detail": "E-number style additive codes were found; presence alone does not prove adulteration."})
     if not indicators:
-        indicators.append({"label": "No strong label signal", "severity": "low", "detail": "The model did not find a strong risk signal in the extracted label features."})
+        indicators.append({"label": "No visible impurity signal", "severity": "low", "detail": "No strong adulteration-related signal was detected from the visible label and image features. Laboratory testing is still required to confirm purity."})
 
     ok, encoded = cv2.imencode(".jpg", original, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
     preview = f"data:image/jpeg;base64,{base64.b64encode(encoded.tobytes()).decode('ascii')}" if ok else ""

@@ -116,7 +116,7 @@ function RiskBadge({ level }: { level: FoodAnalysis['riskLevel'] }) {
 function Report({ analysis }: { analysis: FoodAnalysis }) {
   const extractedRows: Array<[string, keyof FoodAnalysis['extracted'], boolean]> = [
     ['Product name', 'productName', false], ['Brand', 'brand', false], ['Manufacturing date', 'manufacturingDate', true], ['Expiry date', 'expiryDate', true],
-    ['Best before', 'bestBefore', true], ['Batch / lot', 'batchNumber', false], ['Ingredients', 'ingredients', false], ['MRP', 'mrp', false],
+    ['Best before', 'bestBefore', true], ['Batch / lot', 'batchNumber', false], ['Ingredients', 'ingredients', false], ['Net quantity', 'netQuantity', false], ['MRP', 'mrp', false],
   ];
   const expiryTone = analysis.expiryStatus === 'expired' ? 'red' : analysis.expiryStatus === 'not_expired' ? 'teal' : 'amber';
   return (

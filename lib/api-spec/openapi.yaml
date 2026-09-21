@@ -173,9 +173,11 @@ components:
           $ref: "#/components/schemas/FoodExtractedField"
         ingredients:
           $ref: "#/components/schemas/FoodExtractedField"
+        netQuantity:
+          $ref: "#/components/schemas/FoodExtractedField"
         mrp:
           $ref: "#/components/schemas/FoodExtractedField"
-      required: [productName, brand, manufacturingDate, expiryDate, bestBefore, batchNumber, ingredients, mrp]
+      required: [productName, brand, manufacturingDate, expiryDate, bestBefore, batchNumber, ingredients, netQuantity, mrp]
     FoodProbability:
       type: object
       properties:

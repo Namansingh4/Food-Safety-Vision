@@ -59,6 +59,7 @@ export interface FoodExtractedInfo {
   bestBefore: FoodExtractedField;
   batchNumber: FoodExtractedField;
   ingredients: FoodExtractedField;
+  netQuantity: FoodExtractedField;
   mrp: FoodExtractedField;
 }
 
